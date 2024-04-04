@@ -1,0 +1,97 @@
+19:46:59 **** Incremental Build of configuration Nios II for project AssignmentOne ****
+make all 
+Info: Building ../AssignmentOne_bsp/
+C:/intelFPGA/18.1/nios2eds/bin/gnu/H-x86_64-mingw32/bin/make --no-print-directory -C ../AssignmentOne_bsp/
+[BSP build complete]
+Info: Compiling hello_world.c to obj/default/hello_world.o
+nios2-elf-gcc -xc -MP -MMD -c -I../AssignmentOne_bsp//HAL/inc -I../AssignmentOne_bsp/ -I../AssignmentOne_bsp//drivers/inc  -pipe -D__hal__ -DALT_NO_INSTRUCTION_EMULATION -DALT_SINGLE_THREADED    -O0 -g -Wall   -mhw-div -mhw-mul -mno-hw-mulx -mgpopt=global  -o obj/default/hello_world.o hello_world.c
+hello_world.c: In function 'main':
+hello_world.c:76:136: warning: character constant too long for its type
+  xTaskCreate(Switch_Control_Task, 'Switch', configMINIMAL_STACK_SIZE, Switch_Control_Param, Switch_Task_Priority, switch_control_handle);
+                                                                                                                                        ^
+In file included from hello_world.c:7:0:
+FreeRTOS/task.h:344:134: warning: passing argument 2 of 'xTaskGenericCreate' makes pointer from integer without a cast [-Wint-conversion]
+ #define xTaskCreate( pvTaskCode, pcName, usStackDepth, pvParameters, uxPriority, pxCreatedTask ) xTaskGenericCreate( ( pvTaskCode ), ( pcName ), ( usStackDepth ), ( pvParameters ), ( uxPriority ), ( pxCreatedTask ), ( NULL ), ( NULL ) )
+                                                                                                                                      ^
+hello_world.c:76:2: note: in expansion of macro 'xTaskCreate'
+  xTaskCreate(Switch_Control_Task, 'Switch', configMINIMAL_STACK_SIZE, Switch_Control_Param, Switch_Task_Priority, switch_control_handle);
+  ^
+FreeRTOS/task.h:1949:12: note: expected 'const char * const' but argument is of type 'int'
+ BaseType_t xTaskGenericCreate( TaskFunction_t pxTaskCode, const char * const pcName, const uint16_t usStackDepth, void * const pvParameters, UBaseType_t uxPriority, TaskHandle_t * const pxCreatedTask, StackType_t * const puxStackBuffer, const MemoryRegion_t * const xRegions ) PRIVILEGED_FUNCTION; /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+            ^
+hello_world.c:77:102: warning: multi-character character constant [-Wmultichar]
+  xTaskCreate(Load_LED_Ctrl_Task,'LEDs',configMINIMAL_STACK_SIZE,NULL,Load_LED_Ctrl_Task_Priority,NULL);
+                                                                                                      ^
+In file included from hello_world.c:7:0:
+FreeRTOS/task.h:344:134: warning: passing argument 2 of 'xTaskGenericCreate' makes pointer from integer without a cast [-Wint-conversion]
+ #define xTaskCreate( pvTaskCode, pcName, usStackDepth, pvParameters, uxPriority, pxCreatedTask ) xTaskGenericCreate( ( pvTaskCode ), ( pcName ), ( usStackDepth ), ( pvParameters ), ( uxPriority ), ( pxCreatedTask ), ( NULL ), ( NULL ) )
+                                                                                                                                      ^
+hello_world.c:77:2: note: in expansion of macro 'xTaskCreate'
+  xTaskCreate(Load_LED_Ctrl_Task,'LEDs',configMINIMAL_STACK_SIZE,NULL,Load_LED_Ctrl_Task_Priority,NULL);
+  ^
+FreeRTOS/task.h:1949:12: note: expected 'const char * const' but argument is of type 'int'
+ BaseType_t xTaskGenericCreate( TaskFunction_t pxTaskCode, const char * const pcName, const uint16_t usStackDepth, void * const pvParameters, UBaseType_t uxPriority, TaskHandle_t * const pxCreatedTask, StackType_t * const puxStackBuffer, const MemoryRegion_t * const xRegions ) PRIVILEGED_FUNCTION; /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+            ^
+hello_world.c:78:101: warning: character constant too long for its type
+  xTaskCreate(Keyboard_Task, 'Keyboard', configMINIMAL_STACK_SIZE, NULL, Keyboard_Task_Priority, NULL);
+                                                                                                     ^
+In file included from hello_world.c:7:0:
+FreeRTOS/task.h:344:134: warning: passing argument 2 of 'xTaskGenericCreate' makes pointer from integer without a cast [-Wint-conversion]
+ #define xTaskCreate( pvTaskCode, pcName, usStackDepth, pvParameters, uxPriority, pxCreatedTask ) xTaskGenericCreate( ( pvTaskCode ), ( pcName ), ( usStackDepth ), ( pvParameters ), ( uxPriority ), ( pxCreatedTask ), ( NULL ), ( NULL ) )
+                                                                                                                                      ^
+hello_world.c:78:2: note: in expansion of macro 'xTaskCreate'
+  xTaskCreate(Keyboard_Task, 'Keyboard', configMINIMAL_STACK_SIZE, NULL, Keyboard_Task_Priority, NULL);
+  ^
+FreeRTOS/task.h:1949:12: note: expected 'const char * const' but argument is of type 'int'
+ BaseType_t xTaskGenericCreate( TaskFunction_t pxTaskCode, const char * const pcName, const uint16_t usStackDepth, void * const pvParameters, UBaseType_t uxPriority, TaskHandle_t * const pxCreatedTask, StackType_t * const puxStackBuffer, const MemoryRegion_t * const xRegions ) PRIVILEGED_FUNCTION; /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+            ^
+hello_world.c:79:113: warning: character constant too long for its type
+  xTaskCreate(Stability_Monitor_Task, 'Monitoring', configMINIMAL_STACK_SIZE, NULL, Stable_Mon_Tsk_Priority, NULL);
+                                                                                                                 ^
+In file included from hello_world.c:7:0:
+FreeRTOS/task.h:344:134: warning: passing argument 2 of 'xTaskGenericCreate' makes pointer from integer without a cast [-Wint-conversion]
+ #define xTaskCreate( pvTaskCode, pcName, usStackDepth, pvParameters, uxPriority, pxCreatedTask ) xTaskGenericCreate( ( pvTaskCode ), ( pcName ), ( usStackDepth ), ( pvParameters ), ( uxPriority ), ( pxCreatedTask ), ( NULL ), ( NULL ) )
+                                                                                                                                      ^
+hello_world.c:79:2: note: in expansion of macro 'xTaskCreate'
+  xTaskCreate(Stability_Monitor_Task, 'Monitoring', configMINIMAL_STACK_SIZE, NULL, Stable_Mon_Tsk_Priority, NULL);
+  ^
+FreeRTOS/task.h:1949:12: note: expected 'const char * const' but argument is of type 'int'
+ BaseType_t xTaskGenericCreate( TaskFunction_t pxTaskCode, const char * const pcName, const uint16_t usStackDepth, void * const pvParameters, UBaseType_t uxPriority, TaskHandle_t * const pxCreatedTask, StackType_t * const puxStackBuffer, const MemoryRegion_t * const xRegions ) PRIVILEGED_FUNCTION; /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+            ^
+hello_world.c: In function 'Stability_Monitor_Task':
+hello_world.c:108:4: warning: implicit declaration of function 'memcpy' [-Wimplicit-function-declaration]
+    memcpy(temp_five,Prev_Five_Freq, 5*sizeof(float));
+    ^
+hello_world.c:108:4: warning: incompatible implicit declaration of built-in function 'memcpy'
+hello_world.c:108:4: note: include '<string.h>' or provide a declaration of 'memcpy'
+hello_world.c: In function 'Keyboard_Task':
+hello_world.c:140:10: warning: multi-character character constant [-Wmultichar]
+     case 'e0':
+          ^
+hello_world.c:140:5: warning: case label value exceeds maximum value for type
+     case 'e0':
+     ^
+hello_world.c:143:9: warning: implicit declaration of function 'strcmp' [-Wimplicit-function-declaration]
+     if (strcmp(byte, "6b") || (strcmp(byte, "74"))) {
+         ^
+hello_world.c:133:10: warning: unused variable 'stuff' [-Wunused-variable]
+  uint8_t stuff = 1;
+          ^
+hello_world.c: At top level:
+hello_world.c:36:13: warning: 'Load_Management_Task' declared 'static' but never defined [-Wunused-function]
+ static void Load_Management_Task(void *pvParams);
+             ^
+hello_world.c:39:13: warning: 'VGA_Task' declared 'static' but never defined [-Wunused-function]
+ static void VGA_Task(void *pvParams);
+             ^
+Info: Linking AssignmentOne.elf
+nios2-elf-g++  -T'../AssignmentOne_bsp//linker.x' -msys-crt0='../AssignmentOne_bsp//obj/HAL/src/crt0.o' -msys-lib=hal_bsp -L../AssignmentOne_bsp/   -Wl,-Map=AssignmentOne.map   -O0 -g -Wall   -mhw-div -mhw-mul -mno-hw-mulx -mgpopt=global  -o AssignmentOne.elf obj/default/FreeRTOS/croutine.o obj/default/FreeRTOS/event_groups.o obj/default/FreeRTOS/heap.o obj/default/FreeRTOS/list.o obj/default/FreeRTOS/port.o obj/default/FreeRTOS/queue.o obj/default/FreeRTOS/tasks.o obj/default/FreeRTOS/timers.o obj/default/hello_world.o obj/default/FreeRTOS/port_asm.o -lm -msys-lib=m
+nios2-elf-insert AssignmentOne.elf --thread_model hal --cpu_name nios2 --qsys true --simulation_enabled false --id 7 --sidp 0x430f0 --timestamp 1393900972 --stderr_dev jtag_uart --stdin_dev jtag_uart --stdout_dev jtag_uart --sopc_system_name nios2 --quartus_project_dir "H:/Downloads/FrequencyRelay/freeRTOS_test/freeRTOS_test" --sopcinfo H:/Downloads/FrequencyRelay/freeRTOS_test/freeRTOS_test/software/AssignmentOne_bsp/../../nios2.sopcinfo
+Info: (AssignmentOne.elf) 612 KBytes program size (code + initialized data).
+Info:                     130561 KBytes free for stack + heap.
+Info: Creating AssignmentOne.objdump
+nios2-elf-objdump --disassemble --syms --all-header --source AssignmentOne.elf >AssignmentOne.objdump
+[AssignmentOne build complete]
+
+19:47:06 Build Finished (took 7s.594ms)
+

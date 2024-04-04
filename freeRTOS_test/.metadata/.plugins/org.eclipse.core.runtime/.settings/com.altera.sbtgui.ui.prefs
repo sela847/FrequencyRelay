@@ -1,4 +1,4 @@
 eclipse.preferences.version=1
-newSoftwareExampleWizardPage.defaultLocation=H\:\\Downloads\\freeRTOS_test\\freeRTOS_test\\software\\Ass1
-newSoftwareExampleWizardPage.sopcinfoFile=H\:\\Downloads\\freeRTOS_test\\freeRTOS_test\\nios2.sopcinfo
-newSoftwareExampleWizardPage2.newBspLocation=H\:\\Downloads\\freeRTOS_test\\freeRTOS_test\\software\\Ass1_bsp
+newSoftwareExampleWizardPage.defaultLocation=H\:\\Downloads\\FrequencyRelay\\freeRTOS_test\\freeRTOS_test\\software\\AssignmentOne
+newSoftwareExampleWizardPage.sopcinfoFile=H\:\\Downloads\\FrequencyRelay\\freeRTOS_test\\freeRTOS_test\\nios2.sopcinfo
+newSoftwareExampleWizardPage2.newBspLocation=H\:\\Downloads\\FrequencyRelay\\freeRTOS_test\\freeRTOS_test\\software\\AssignmentOne_bsp
