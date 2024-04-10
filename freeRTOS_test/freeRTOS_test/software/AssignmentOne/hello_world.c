@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <system.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "sys/alt_irq.h"
 #include "altera_avalon_pio_regs.h"
@@ -7,7 +8,10 @@
 #include "FreeRTOS/task.h"
 #include "FreeRTOS/queue.h"
 #include "altera_up_avalon_ps2.h"
+#include "altera_up_ps2_keyboard.h"
 #include "FreeRTOS/semphr.h"
+#include "io.h"
+
 
 #define Switch_Control_Param    ( ( void * ) 0x12345678 )
 //#define mainTask_PRIORITY (tskIDLE_PRIORITY + 1)
@@ -18,19 +22,23 @@
 #define Load_Management_Task_Priority 5
 #define Load_LED_Ctrl_Task_Priority 3
 #define VGA_Task_Priority 1
-
+#define   STBL_QUEUE_SIZE  1
+// Global Variables:
 int Current_Switch_State, Current_Freq, Freq_Val, Maintenance,
 		Current_Stable, Thresh_Val, Thresh_ROC, Prev_Stable, Ld_Manage_State, Init_Load;
 float Prev_Five_Freq[5], Current_ROC_Freq;
-uint8_t use_ROC_Thresh = 0b0000; // 0 is using Thresh_Val, 1 is using ROC_Thresh
+uint8_t use_ROC_Thresh = 0; // 0 is using Thresh_Val, 1 is using ROC_Thresh
+
+// Semaphores:
 SemaphoreHandle_t semaphore;
 SemaphoreHandle_t freqSemaphore;
 SemaphoreHandle_t threshold_mutex;
+
 TaskHandle_t switch_control_handle;
 
-//TaskHandle_t switch_control_handle;
-//TaskHandle_t switch_control_handle;
-//TaskHandle_t switch_control_handle;
+// Queues
+QueueHandle_t StabilityQ;
+
 
 
 static void Load_Management_Task(void *pvParams);
@@ -39,15 +47,37 @@ static void Keyboard_Task(void *pvParams);
 static void VGA_Task(void *pvParams);
 static void Load_LED_Ctrl_Task(void *pvParams);
 static void Switch_Control_Task(void *pvParams);
-
-
-
 unsigned char byte;
 
 void ps2_isr(void* ps2_device, alt_u32 id){
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-	alt_up_ps2_read_data_byte_timeout(ps2_device, &byte);
-	xSemaphoreGiveFromISR(semaphore, &xHigherPriorityTaskWoken);
+	char ascii;
+	int status = 0;
+	KB_CODE_TYPE decode_mode;
+	status = decode_scancode (ps2_device, &decode_mode , &byte , &ascii) ;
+	if ( status == 0 ) //success
+	{
+		// print out the result
+		switch ( decode_mode )
+	    {
+	      case KB_ASCII_MAKE_CODE :
+	        //printf ( "ASCII   : %x\n", byte ) ;
+	        break ;
+	      case KB_LONG_BINARY_MAKE_CODE :
+	        // do nothing
+	      case KB_BINARY_MAKE_CODE :
+	        //printf ( "MAKE CODE : %x\n", byte ) ;
+	        break ;
+	      case KB_BREAK_CODE :
+	        // do nothing
+	      default :
+	        xSemaphoreGiveFromISR(semaphore, &xHigherPriorityTaskWoken);
+	        break ;
+	    }
+	    IOWR(SEVEN_SEG_BASE,0 ,byte);
+	  }
+
+
 }
 
 void freq_relay_isr() {
@@ -57,6 +87,7 @@ void freq_relay_isr() {
 }
 
 int main(void) {
+	StabilityQ = xQueueCreate( STBL_QUEUE_SIZE, sizeof( void* ) );
 	alt_up_ps2_dev * ps2_device = alt_up_ps2_open_dev(PS2_NAME);
 	//Threshold values defined.
 	Thresh_Val = 55;
@@ -101,7 +132,7 @@ static void Load_LED_Ctrl_Task(void *pvParams) {
 }
 
 static void Stability_Monitor_Task(void *paParams) {
-
+	unsigned int stableQ;
 	while (1) {
 		float temp_five[5];
 		if (xSemaphoreTake(freqSemaphore, portMAX_DELAY) == pdTRUE) {
@@ -118,6 +149,16 @@ static void Stability_Monitor_Task(void *paParams) {
 			//printf("change freq %f\n", change_freq);
 			Current_ROC_Freq = (double)(change_freq * 16000)/ (double)Freq_Val;
 			//printf("Rate of change is %f hz/s \n", Current_ROC_Freq);
+
+			if ((Prev_Five_Freq[0] < Thresh_Val) || (abs(Current_ROC_Freq)>Thresh_ROC)) {
+				printf("-----UNSTABLE----- \n");
+				printf("Current Freq:%f, Thresh: %d, Current ROC: %f, Thresh: %d \n",Prev_Five_Freq[0],Thresh_Val,Current_ROC_Freq,Thresh_ROC);
+				Current_Stable = 0;
+			} else {
+				Current_Stable = 1;
+			}
+			stableQ = Current_Stable;
+			xQueueSend(StabilityQ, (void *)&stableQ,0);
 			vTaskDelay(100);
 		} else {
 			printf("no freq_semaphore was taken");
@@ -130,24 +171,32 @@ static void Keyboard_Task(void *pvParams) {
 	//DOWN:  72
 	//LEFT:  6B
 	//RIGHT: 74
-	uint8_t stuff = 1;
-
 	while (1) {
 		if (xSemaphoreTake(semaphore, portMAX_DELAY) == pdTRUE) {
-			printf("Scan code: %x\n", byte);
-
-			switch (byte) {
-				case 'e0':
-				printf("most annoying value");
-
-				if (strcmp(byte, "6b") || (strcmp(byte, "74"))) {
-					use_ROC_Thresh = use_ROC_Thresh ^ 0b0001;
-					printf("Which Thresh it's using: %d\n", use_ROC_Thresh);
+			if (byte == 0x75) {
+				// Up case
+				if (use_ROC_Thresh == 0) {
+					Thresh_Val +=1;
+					printf("%d\n",Thresh_Val);
+				} else {
+					Thresh_ROC += 1;
+					printf("%d\n",Thresh_ROC);
 				}
-				vTaskDelay(500);
-				break;
-			}
 
+			} else if (byte == 0x72) {
+				// DOWN case
+				if (use_ROC_Thresh ==0) {
+					Thresh_Val += -1;
+					printf("%d\n",Thresh_Val);
+				} else {
+					Thresh_ROC += -1;
+					printf("%d\n",Thresh_ROC);
+				}
+			} else if (byte == 0x6B || byte== 0x74) {
+				use_ROC_Thresh = use_ROC_Thresh ^ 0b1;
+			} else {
+				printf("not valid key press \n");
+			}
 		} else {
 			printf("no semaphore was taken");
 		}
