@@ -10,6 +10,7 @@
 #include "altera_up_avalon_ps2.h"
 #include "altera_up_ps2_keyboard.h"
 #include "FreeRTOS/semphr.h"
+#include "FreeRTOS/timers.h"
 #include "io.h"
 
 
@@ -17,15 +18,15 @@
 //#define mainTask_PRIORITY (tskIDLE_PRIORITY + 1)
 
 #define Switch_Task_Priority 4
-#define Stable_Mon_Tsk_Priority 6
-#define Keyboard_Task_Priority 2
-#define Load_Management_Task_Priority 5
+#define Stable_Mon_Tsk_Priority 1
+#define Keyboard_Task_Priority 5
+#define Load_Management_Task_Priority 2
 #define Load_LED_Ctrl_Task_Priority 3
-#define VGA_Task_Priority 1
-#define   STBL_QUEUE_SIZE  1
+#define VGA_Task_Priority 6
+#define   STBL_QUEUE_SIZE  50
 // Global Variables:
 int Current_Switch_State, Current_Freq, Freq_Val, Maintenance,
-		Current_Stable, Thresh_Val, Thresh_ROC, Prev_Stable, Ld_Manage_State, Init_Load;
+		Current_Stable, Thresh_Val, Thresh_ROC, Prev_Stable, Ld_Manage_State, Init_Load, LoadTimeExp;
 float Prev_Five_Freq[5], Current_ROC_Freq;
 uint8_t use_ROC_Thresh = 0; // 0 is using Thresh_Val, 1 is using ROC_Thresh
 
@@ -38,8 +39,10 @@ TaskHandle_t switch_control_handle;
 
 // Queues
 QueueHandle_t StabilityQ;
+QueueHandle_t LoadControlQ;
 
-
+// Timers
+TimerHandle_t LoadTimer;
 
 static void Load_Management_Task(void *pvParams);
 static void Stability_Monitor_Task(void *pvParams);
@@ -49,6 +52,15 @@ static void Load_LED_Ctrl_Task(void *pvParams);
 static void Switch_Control_Task(void *pvParams);
 unsigned char byte;
 
+
+void MaintenanceStateButton () {
+
+	  // Inverting maintenance mode:
+	Maintenance ^= 0x1;
+	  // clears the edge capture register
+	IOWR_ALTERA_AVALON_PIO_EDGE_CAP(PUSH_BUTTON_BASE, 0x7);
+
+}
 void ps2_isr(void* ps2_device, alt_u32 id){
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	char ascii;
@@ -79,7 +91,11 @@ void ps2_isr(void* ps2_device, alt_u32 id){
 
 
 }
-
+void loadTimerISR(TimerHandle_t xTimer) {
+	// Timer has expired, do smthn
+	printf("expired \n");
+	LoadTimeExp = 1;
+}
 void freq_relay_isr() {
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	Freq_Val= IORD(FREQUENCY_ANALYSER_BASE, 0); //it's in COUNT, not in HERTZ. to convert, do 16000/temp
@@ -88,7 +104,12 @@ void freq_relay_isr() {
 
 int main(void) {
 	StabilityQ = xQueueCreate( STBL_QUEUE_SIZE, sizeof( void* ) );
+	LoadControlQ = xQueueCreate(STBL_QUEUE_SIZE, sizeof(void*));
 	alt_up_ps2_dev * ps2_device = alt_up_ps2_open_dev(PS2_NAME);
+
+	IOWR_ALTERA_AVALON_PIO_EDGE_CAP(PUSH_BUTTON_BASE, 0x7); // Clearing edge capture register for ISR
+	IOWR_ALTERA_AVALON_PIO_IRQ_MASK(PUSH_BUTTON_BASE,0x7); // Enabling interrupts for the buttons
+	alt_irq_register(PUSH_BUTTON_IRQ,0,MaintenanceStateButton);
 	//Threshold values defined.
 	Thresh_Val = 55;
 	Thresh_ROC = 5;
@@ -104,11 +125,18 @@ int main(void) {
 	semaphore = xSemaphoreCreateBinary();
 	freqSemaphore = xSemaphoreCreateBinary();
 	threshold_mutex = xSemaphoreCreateMutex(); //has a priority inheritance mechanism unlike binary semaphores.
+
+
+	// Creating Timers
+	LoadTimer = xTimerCreate("LoadTimer",pdMS_TO_TICKS(500),pdTRUE,NULL,loadTimerISR);
+
+	// Creating Tasks used
 	xTaskCreate(Switch_Control_Task, 'Switch', configMINIMAL_STACK_SIZE, Switch_Control_Param, Switch_Task_Priority, switch_control_handle);
 	xTaskCreate(Load_LED_Ctrl_Task,'LEDs',configMINIMAL_STACK_SIZE,NULL,Load_LED_Ctrl_Task_Priority,NULL);
 	xTaskCreate(Keyboard_Task, 'Keyboard', configMINIMAL_STACK_SIZE, NULL, Keyboard_Task_Priority, NULL);
 	xTaskCreate(Stability_Monitor_Task, 'Monitoring', configMINIMAL_STACK_SIZE, NULL, Stable_Mon_Tsk_Priority, NULL);
-	//xTaskCreate(Load_Management_Task, 'Management', configMINIMAL_STACK_SIZE, NULL, Load_Management_Task_Priority, NULL);
+	xTaskCreate(Load_Management_Task, 'LoadShed',configMINIMAL_STACK_SIZE,NULL,Load_Management_Task_Priority,NULL);
+
 	//xTaskCreate(VGA_Task, 'VGA', configMINIMAL_STACK_SIZE, NULL, VGA_Task_Priority, NULL);
 
 	vTaskStartScheduler();
@@ -118,19 +146,90 @@ int main(void) {
 
 static void Switch_Control_Task(void *pvParams) {
 	while (1) {
-		//printf("SwitchTask\n"); //Debug version
+		printf("SwitchTask\n"); //Debug version
 		Current_Switch_State = IORD_ALTERA_AVALON_PIO_DATA(SLIDE_SWITCH_BASE);
 		vTaskDelay(pdMS_TO_TICKS(200));
 	}
 }
 static void Load_LED_Ctrl_Task(void *pvParams) {
+	unsigned int *LdQ;
 	while (1) {
-		//printf("LED Control Task \n");
+		printf("LED Control Task \n");
+		xQueueReceive(LoadControlQ,&LdQ,portMAX_DELAY);
 		IOWR_ALTERA_AVALON_PIO_DATA(RED_LEDS_BASE, Current_Switch_State);
+		IOWR_ALTERA_AVALON_PIO_DATA(GREEN_LEDS_BASE,LdQ);
 		vTaskDelay(pdMS_TO_TICKS(200));
 	}
 }
+static void Load_Management_Task(void *pvParams) {
+	unsigned int *stable;
+	unsigned int LoadQ;
+	while(1) {
 
+		xQueueReceive(StabilityQ,&stable,portMAX_DELAY);
+		printf("Maintenance: %d\n",Maintenance);
+		if (Maintenance != 0) {
+
+			if (stable == 0 && Ld_Manage_State == 0) { // Found to be unstable
+			// Labeling as now in load managing state
+				Ld_Manage_State = 1;
+				Init_Load = Current_Switch_State;
+				Prev_Stable = Current_Switch_State;
+				Prev_Stable = (Prev_Stable & ~(1 << 5)) | (1<< 5);
+				xTimerStart(LoadTimer,0);
+			}
+			if (Ld_Manage_State == 1) {
+				if (stable ==1) {
+					if ((Prev_Stable >> 6) == 0) { // If it was unstable prior we reset the timer
+						xTimerReset(LoadTimer,0);
+					} else if (LoadTimeExp == 1) {
+						LoadTimeExp = 0;
+						// Restoring
+					}
+					Prev_Stable = (Prev_Stable & ~(1 << 5)) | (1<< 5);
+
+				} else {
+					// Finding the lowest bit (lowest priority that is on)
+					int pos = 0;
+					unsigned int mask = 1;
+					if ((Prev_Stable >> 6) == 1) { // If it was stable prior we reset the timer
+						xTimerReset(LoadTimer,0);
+						printf("HERE\n");
+					} else if ((LoadTimeExp == 1) || ((Prev_Stable & 0b011111) == Init_Load) ) {
+						printf("here \n");
+						LoadTimeExp = 0;
+						int iso = Prev_Stable & -Prev_Stable;
+						while (iso > 1) {
+							iso>>=1;
+							pos++;
+						}
+						if (pos == 5) {
+							// ALL LOADS ARE OFF, don't do any shedding
+						} else {
+							mask = 1 << pos;
+							Prev_Stable &= ~mask;
+							LoadQ = Prev_Stable;
+							LoadQ &= 0b011111;
+							printf("LOAD: %d\n",LoadQ);
+							xQueueSend(LoadControlQ,(void *)&LoadQ,0);
+
+						}
+						Prev_Stable = (Prev_Stable & ~(1 << 5)) | (0<< 5);
+						xTimerStart(LoadTimer,0);
+					}
+
+				}
+
+			}
+		} else {
+			LoadQ = Current_Switch_State;
+			xQueueSend(LoadControlQ,(void *)&LoadQ,0);
+			Ld_Manage_State = 0;
+		}
+		vTaskDelay(100);
+
+	}
+}
 static void Stability_Monitor_Task(void *paParams) {
 	unsigned int stableQ;
 	while (1) {
@@ -138,7 +237,6 @@ static void Stability_Monitor_Task(void *paParams) {
 		if (xSemaphoreTake(freqSemaphore, portMAX_DELAY) == pdTRUE) {
 			memcpy(temp_five,Prev_Five_Freq, 5*sizeof(float));
 			for (uint8_t i=0;i<3;i++) {
-
 				Prev_Five_Freq[i+1] = temp_five[i];
 			}
 
@@ -151,14 +249,17 @@ static void Stability_Monitor_Task(void *paParams) {
 			//printf("Rate of change is %f hz/s \n", Current_ROC_Freq);
 
 			if ((Prev_Five_Freq[0] < Thresh_Val) || (abs(Current_ROC_Freq)>Thresh_ROC)) {
-				printf("-----UNSTABLE----- \n");
-				printf("Current Freq:%f, Thresh: %d, Current ROC: %f, Thresh: %d \n",Prev_Five_Freq[0],Thresh_Val,Current_ROC_Freq,Thresh_ROC);
+				//printf("-----UNSTABLE----- \n");
+				//printf("Current Freq:%f, Thresh: %d, Current ROC: %f, Thresh: %d \n",Prev_Five_Freq[0],Thresh_Val,Current_ROC_Freq,Thresh_ROC);
 				Current_Stable = 0;
+				stableQ = Current_Stable;
+				xQueueSend(StabilityQ, (void *)&stableQ,0);
 			} else {
 				Current_Stable = 1;
+				stableQ = Current_Stable;
+				xQueueSend(StabilityQ, (void *)&stableQ,0);
 			}
-			stableQ = Current_Stable;
-			xQueueSend(StabilityQ, (void *)&stableQ,0);
+			//printf("Stable: %d \n",stableQ);
 			vTaskDelay(100);
 		} else {
 			printf("no freq_semaphore was taken");
@@ -187,9 +288,15 @@ static void Keyboard_Task(void *pvParams) {
 				// DOWN case
 				if (use_ROC_Thresh ==0) {
 					Thresh_Val += -1;
+					if (Thresh_Val <= 0) {
+						Thresh_Val = 0;
+					}
 					printf("%d\n",Thresh_Val);
 				} else {
 					Thresh_ROC += -1;
+					if (Thresh_ROC <= 0) {
+						Thresh_ROC = 0;
+					}
 					printf("%d\n",Thresh_ROC);
 				}
 			} else if (byte == 0x6B || byte== 0x74) {
