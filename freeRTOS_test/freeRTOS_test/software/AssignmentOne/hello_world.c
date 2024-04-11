@@ -167,36 +167,67 @@ static void Load_Management_Task(void *pvParams) {
 	while(1) {
 
 		xQueueReceive(StabilityQ,&stable,portMAX_DELAY);
-		printf("Maintenance: %d\n",Maintenance);
-		if (Maintenance != 0) {
 
+		if (Maintenance != 0) {
 			if (stable == 0 && Ld_Manage_State == 0) { // Found to be unstable
 			// Labeling as now in load managing state
 				Ld_Manage_State = 1;
+
 				Init_Load = Current_Switch_State;
 				Prev_Stable = Current_Switch_State;
-				Prev_Stable = (Prev_Stable & ~(1 << 5)) | (1<< 5);
 				xTimerStart(LoadTimer,0);
 			}
 			if (Ld_Manage_State == 1) {
 				if (stable ==1) {
-					if ((Prev_Stable >> 6) == 0) { // If it was unstable prior we reset the timer
+					if ((Prev_Stable >> 5) == 0) { // If it was unstable prior we reset the timer
 						xTimerReset(LoadTimer,0);
 					} else if (LoadTimeExp == 1) {
 						LoadTimeExp = 0;
 						// Restoring
+
+						//loop through and check to see which of the highest bits need to be 'unshedded'
+						int found = 0;
+						int pos = 4;
+						int mask = 1;
+						int val;
+						printf("Prev_Stable: %d\n",Prev_Stable);
+						while (found == 0 && pos>=0) {
+							mask = 1<<pos;
+							val = Prev_Stable & mask;
+							if (!val && (Init_Load & (1U << pos))) {
+								found =1;
+								printf("Position:%d \n",pos);
+								printf("Init: %d\n",Init_Load);
+								break;
+							}
+							pos--;
+						}
+						if (found == 1) {
+							Prev_Stable |= (1U << pos); // putting 1 into the position found
+							LoadQ = Prev_Stable;
+							LoadQ &= 0b011111;
+							printf("LOAD: %d\n",LoadQ);
+							xQueueSend(LoadControlQ,(void *)&LoadQ,0);
+
+						}
+						xTimerStart(LoadTimer,0);
 					}
-					Prev_Stable = (Prev_Stable & ~(1 << 5)) | (1<< 5);
+					Prev_Stable |= (1U << 5);
+					if (Prev_Stable == (Init_Load | 1<<5)) {
+						// No longer needs to be in load manage state
+						Ld_Manage_State = 0;
+					}
 
 				} else {
+					printf("UNSABLE \n");
 					// Finding the lowest bit (lowest priority that is on)
 					int pos = 0;
 					unsigned int mask = 1;
-					if ((Prev_Stable >> 6) == 1) { // If it was stable prior we reset the timer
+					if ((Prev_Stable >> 5) == 1) { // If it was stable prior we reset the timer
 						xTimerReset(LoadTimer,0);
-						printf("HERE\n");
+
 					} else if ((LoadTimeExp == 1) || ((Prev_Stable & 0b011111) == Init_Load) ) {
-						printf("here \n");
+
 						LoadTimeExp = 0;
 						int iso = Prev_Stable & -Prev_Stable;
 						while (iso > 1) {
@@ -226,7 +257,7 @@ static void Load_Management_Task(void *pvParams) {
 			xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 			Ld_Manage_State = 0;
 		}
-		vTaskDelay(100);
+		vTaskDelay(200);
 
 	}
 }
@@ -260,7 +291,6 @@ static void Stability_Monitor_Task(void *paParams) {
 				xQueueSend(StabilityQ, (void *)&stableQ,0);
 			}
 			//printf("Stable: %d \n",stableQ);
-			vTaskDelay(100);
 		} else {
 			printf("no freq_semaphore was taken");
 		}

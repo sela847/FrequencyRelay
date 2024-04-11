@@ -54,3 +54,4 @@ set_global_assignment -name PARTITION_COLOR 16764057 -section_id Top
 set_global_assignment -name CDF_FILE output_files/Chain3.cdf
 set_global_assignment -name CDF_FILE output_files/Chain1.cdf
 set_global_assignment -name CDF_FILE db/Chain2.cdf
+set_global_assignment -name CDF_FILE Chain1.cdf
