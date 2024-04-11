@@ -12,6 +12,8 @@
 #include "FreeRTOS/semphr.h"
 #include "FreeRTOS/timers.h"
 #include "io.h"
+#include "altera_up_avalon_video_character_buffer_with_dma.h"
+#include "altera_up_avalon_video_pixel_buffer_dma.h"
 
 
 #define Switch_Control_Param    ( ( void * ) 0x12345678 )
@@ -24,10 +26,24 @@
 #define Load_LED_Ctrl_Task_Priority 3
 #define VGA_Task_Priority 6
 #define   STBL_QUEUE_SIZE  50
+
+//For frequency plot
+#define FREQPLT_ORI_X 101		//x axis pixel position at the plot origin
+#define FREQPLT_GRID_SIZE_X 50	//pixel separation in the x axis between two data points
+#define FREQPLT_ORI_Y 199.0		//y axis pixel position at the plot origin
+#define FREQPLT_FREQ_RES 20.0	//number of pixels per Hz (y axis scale)
+
+#define ROCPLT_ORI_X 101
+#define ROCPLT_GRID_SIZE_X 50
+#define ROCPLT_ORI_Y 259.0
+#define ROCPLT_ROC_RES 0.5		//number of pixels per Hz/s (y axis scale)
+
+#define MIN_FREQ 45.0 //minimum frequency to draw
+
 // Global Variables:
 int Current_Switch_State, Current_Freq, Freq_Val, Maintenance,
 		Current_Stable, Thresh_Val, Thresh_ROC, Prev_Stable, Ld_Manage_State, Init_Load, LoadTimeExp;
-float Prev_Five_Freq[5], Current_ROC_Freq;
+float Prev_Five_Freq[5], Current_ROC_Freq[5];
 uint8_t use_ROC_Thresh = 0; // 0 is using Thresh_Val, 1 is using ROC_Thresh
 
 // Semaphores:
@@ -36,13 +52,22 @@ SemaphoreHandle_t freqSemaphore;
 SemaphoreHandle_t threshold_mutex;
 
 TaskHandle_t switch_control_handle;
+TaskHandle_t PRVGADraw;
 
 // Queues
 QueueHandle_t StabilityQ;
 QueueHandle_t LoadControlQ;
+static QueueHandle_t Q_freq_data;
 
 // Timers
 TimerHandle_t LoadTimer;
+
+typedef struct{
+	unsigned int x1;
+	unsigned int y1;
+	unsigned int x2;
+	unsigned int y2;
+}Line;
 
 static void Load_Management_Task(void *pvParams);
 static void Stability_Monitor_Task(void *pvParams);
@@ -99,12 +124,16 @@ void loadTimerISR(TimerHandle_t xTimer) {
 void freq_relay_isr() {
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	Freq_Val= IORD(FREQUENCY_ANALYSER_BASE, 0); //it's in COUNT, not in HERTZ. to convert, do 16000/temp
+	//double temp = 16000.0/Freq_Val;
+	//xQueueSendToBackFromISR(Q_freq_data, &temp, pdFALSE);
 	xSemaphoreGiveFromISR(freqSemaphore, &xHigherPriorityTaskWoken);
 }
 
+//===================================MAIN=============================================//
 int main(void) {
 	StabilityQ = xQueueCreate( STBL_QUEUE_SIZE, sizeof( void* ) );
 	LoadControlQ = xQueueCreate(STBL_QUEUE_SIZE, sizeof(void*));
+	//Q_freq_data = xQueueCreate(5, sizeof(double) );
 	alt_up_ps2_dev * ps2_device = alt_up_ps2_open_dev(PS2_NAME);
 
 	IOWR_ALTERA_AVALON_PIO_EDGE_CAP(PUSH_BUTTON_BASE, 0x7); // Clearing edge capture register for ISR
@@ -135,15 +164,15 @@ int main(void) {
 	xTaskCreate(Load_LED_Ctrl_Task,'LEDs',configMINIMAL_STACK_SIZE,NULL,Load_LED_Ctrl_Task_Priority,NULL);
 	xTaskCreate(Keyboard_Task, 'Keyboard', configMINIMAL_STACK_SIZE, NULL, Keyboard_Task_Priority, NULL);
 	xTaskCreate(Stability_Monitor_Task, 'Monitoring', configMINIMAL_STACK_SIZE, NULL, Stable_Mon_Tsk_Priority, NULL);
-	xTaskCreate(Load_Management_Task, 'LoadShed',configMINIMAL_STACK_SIZE,NULL,Load_Management_Task_Priority,NULL);
+	xTaskCreate(Load_Management_Task, 'LoadShed',configMINIMAL_STACK_SIZE,NULL,Load_Management_Task_Priority,&PRVGADraw);
 
-	//xTaskCreate(VGA_Task, 'VGA', configMINIMAL_STACK_SIZE, NULL, VGA_Task_Priority, NULL);
+	xTaskCreate(VGA_Task, 'VGA', configMINIMAL_STACK_SIZE, NULL, VGA_Task_Priority, NULL);
 
 	vTaskStartScheduler();
 	for(;;);
 }
 
-
+//=======================================END OF MAIN==================================================================//
 static void Switch_Control_Task(void *pvParams) {
 	while (1) {
 		printf("SwitchTask\n"); //Debug version
@@ -267,8 +296,12 @@ static void Stability_Monitor_Task(void *paParams) {
 		float temp_five[5];
 		if (xSemaphoreTake(freqSemaphore, portMAX_DELAY) == pdTRUE) {
 			memcpy(temp_five,Prev_Five_Freq, 5*sizeof(float));
-			for (uint8_t i=0;i<3;i++) {
+			for (uint8_t i=0;i<4;i++) {
 				Prev_Five_Freq[i+1] = temp_five[i];
+			}
+			memcpy(temp_five,Current_ROC_Freq, 5*sizeof(float));
+			for (uint8_t i=0;i<4;i++) {
+				Current_ROC_Freq[i+1] = temp_five[i];
 			}
 
 			Prev_Five_Freq[0] = 16000.0/(double)Freq_Val;	//Freq_val is in count
@@ -276,7 +309,7 @@ static void Stability_Monitor_Task(void *paParams) {
 			//printf("Count number %d\n", Freq_Val);
 			float change_freq = Prev_Five_Freq[0] - Prev_Five_Freq[1];
 			//printf("change freq %f\n", change_freq);
-			Current_ROC_Freq = (double)(change_freq * 16000)/ (double)Freq_Val;
+			Current_ROC_Freq[0] = (double)(change_freq * 16000)/ (double)Freq_Val;
 			//printf("Rate of change is %f hz/s \n", Current_ROC_Freq);
 
 			if ((Prev_Five_Freq[0] < Thresh_Val) || (abs(Current_ROC_Freq)>Thresh_ROC)) {
@@ -337,6 +370,95 @@ static void Keyboard_Task(void *pvParams) {
 		} else {
 			printf("no semaphore was taken");
 		}
+	}
+}
+
+void VGA_Task(void *pvParameters ){
+
+
+	//initialize VGA controllers
+	alt_up_pixel_buffer_dma_dev *pixel_buf;
+	pixel_buf = alt_up_pixel_buffer_dma_open_dev(VIDEO_PIXEL_BUFFER_DMA_NAME);
+	if(pixel_buf == NULL){
+		printf("can't find pixel buffer device\n");
+	}
+	alt_up_pixel_buffer_dma_clear_screen(pixel_buf, 0);
+
+	alt_up_char_buffer_dev *char_buf;
+	char_buf = alt_up_char_buffer_open_dev("/dev/video_character_buffer_with_dma");
+	if(char_buf == NULL){
+		printf("can't find char buffer device\n");
+	}
+	alt_up_char_buffer_clear(char_buf);
+
+
+
+	//Set up plot axes
+	alt_up_pixel_buffer_dma_draw_hline(pixel_buf, 100, 400, 200, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
+	alt_up_pixel_buffer_dma_draw_hline(pixel_buf, 100, 400, 300, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
+	alt_up_pixel_buffer_dma_draw_vline(pixel_buf, 100, 50, 200, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
+	alt_up_pixel_buffer_dma_draw_vline(pixel_buf, 100, 220, 300, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
+
+	alt_up_char_buffer_string(char_buf, "Frequency(Hz)", 4, 4);
+	alt_up_char_buffer_string(char_buf, "52", 10, 7);
+	alt_up_char_buffer_string(char_buf, "50", 10, 12);
+	alt_up_char_buffer_string(char_buf, "48", 10, 17);
+	alt_up_char_buffer_string(char_buf, "46", 10, 22);
+
+	alt_up_char_buffer_string(char_buf, "df/dt(Hz/s)", 4, 26);
+	alt_up_char_buffer_string(char_buf, "60", 10, 28);
+	alt_up_char_buffer_string(char_buf, "30", 10, 30);
+	alt_up_char_buffer_string(char_buf, "0", 10, 32);
+	alt_up_char_buffer_string(char_buf, "-30", 9, 34);
+	alt_up_char_buffer_string(char_buf, "-60", 9, 36);
+	alt_up_char_buffer_string(char_buf, "Lower Threshold", 10, 45);
+	alt_up_char_buffer_string(char_buf, "RoC Threshold", 10, 48);
+
+
+
+	int i = 0, j = 0;
+	Line line_freq, line_roc;
+	char buffer1[50];
+	char buffer2[50];
+	while(1){
+
+		//receive frequency data from queue
+		printf("VGA\n");
+		//clear old graph to draw new graph
+		sprintf(buffer1, "%d", Thresh_Val);
+		sprintf(buffer2, "%d", Thresh_ROC);
+		alt_up_char_buffer_string(char_buf, buffer1 , 30, 45);
+		alt_up_char_buffer_string(char_buf, buffer2 , 30, 48);
+		alt_up_pixel_buffer_dma_draw_box(pixel_buf, 101, 0, 639, 199, 0, 0);
+		alt_up_pixel_buffer_dma_draw_box(pixel_buf, 101, 201, 639, 299, 0, 0);
+
+		for(j=0;j<5;++j){ //i here points to the oldest data, j loops through all the data to be drawn on VGA
+			if (((int)(Prev_Five_Freq[(i+j)%5]) > MIN_FREQ) && ((int)(Prev_Five_Freq[(i+j+1)%5]) > MIN_FREQ)){
+				//Calculate coordinates of the two data points to draw a line in between
+				//Frequency plot
+				line_freq.x1 = FREQPLT_ORI_X + FREQPLT_GRID_SIZE_X * j;
+				line_freq.y1 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (Prev_Five_Freq[(i+j)%5] - MIN_FREQ));
+
+				line_freq.x2 = FREQPLT_ORI_X + FREQPLT_GRID_SIZE_X * (j + 1);
+				line_freq.y2 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (Prev_Five_Freq[(i+j+1)%5] - MIN_FREQ));
+
+				//Frequency RoC plot
+				line_roc.x1 = ROCPLT_ORI_X + ROCPLT_GRID_SIZE_X * j;
+				line_roc.y1 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * Current_ROC_Freq[(i+j)%5]);
+
+				line_roc.x2 = ROCPLT_ORI_X + ROCPLT_GRID_SIZE_X * (j + 1);
+				line_roc.y2 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * Current_ROC_Freq[(i+j+1)%5]);
+
+				//printf("first: %f\n", Prev_Five_Freq[0]);
+				//printf("last value: %f\n", Prev_Five_Freq[4]);
+				//Draw
+				alt_up_pixel_buffer_dma_draw_line(pixel_buf, line_freq.x1, line_freq.y1, line_freq.x2, line_freq.y2, 0x3ff << 0, 0);
+				alt_up_pixel_buffer_dma_draw_line(pixel_buf, line_roc.x1, line_roc.y1, line_roc.x2, line_roc.y2, 0x3ff << 0, 0);
+			}
+		}
+
+		vTaskDelay(pdMS_TO_TICKS(500));
+
 	}
 }
 
