@@ -248,7 +248,7 @@ static void Load_Management_Task(void *pvParams) {
 					}
 
 				} else {
-					printf("UNSABLE \n");
+					printf("UNSTABLE \n");
 					// Finding the lowest bit (lowest priority that is on)
 					int pos = 0;
 					unsigned int mask = 1;
@@ -315,11 +315,11 @@ static void Stability_Monitor_Task(void *paParams) {
 			if ((Prev_Five_Freq[0] < Thresh_Val) || (abs(Current_ROC_Freq)>Thresh_ROC)) {
 				//printf("-----UNSTABLE----- \n");
 				//printf("Current Freq:%f, Thresh: %d, Current ROC: %f, Thresh: %d \n",Prev_Five_Freq[0],Thresh_Val,Current_ROC_Freq,Thresh_ROC);
-				Current_Stable = 0;
+				Current_Stable = 0;  //Unstable
 				stableQ = Current_Stable;
 				xQueueSend(StabilityQ, (void *)&stableQ,0);
 			} else {
-				Current_Stable = 1;
+				Current_Stable = 1;   //stable
 				stableQ = Current_Stable;
 				xQueueSend(StabilityQ, (void *)&stableQ,0);
 			}
@@ -394,8 +394,8 @@ void VGA_Task(void *pvParameters ){
 
 
 	//Set up plot axes
-	alt_up_pixel_buffer_dma_draw_hline(pixel_buf, 100, 400, 200, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
-	alt_up_pixel_buffer_dma_draw_hline(pixel_buf, 100, 400, 300, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
+	alt_up_pixel_buffer_dma_draw_hline(pixel_buf, 100, 350, 200, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
+	alt_up_pixel_buffer_dma_draw_hline(pixel_buf, 100, 350, 300, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
 	alt_up_pixel_buffer_dma_draw_vline(pixel_buf, 100, 50, 200, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
 	alt_up_pixel_buffer_dma_draw_vline(pixel_buf, 100, 220, 300, ((0x3ff << 20) + (0x3ff << 10) + (0x3ff)), 0);
 
@@ -413,6 +413,7 @@ void VGA_Task(void *pvParameters ){
 	alt_up_char_buffer_string(char_buf, "-60", 9, 36);
 	alt_up_char_buffer_string(char_buf, "Lower Threshold", 10, 45);
 	alt_up_char_buffer_string(char_buf, "RoC Threshold", 10, 48);
+	alt_up_char_buffer_string(char_buf, "Status", 40, 43);
 
 
 
@@ -420,15 +421,24 @@ void VGA_Task(void *pvParameters ){
 	Line line_freq, line_roc;
 	char buffer1[50];
 	char buffer2[50];
+	unsigned int *stable;
 	while(1){
 
 		//receive frequency data from queue
 		printf("VGA\n");
 		//clear old graph to draw new graph
+		xQueueReceive(StabilityQ,&stable,portMAX_DELAY);
+
 		sprintf(buffer1, "%d", Thresh_Val);
 		sprintf(buffer2, "%d", Thresh_ROC);
 		alt_up_char_buffer_string(char_buf, buffer1 , 30, 45);
 		alt_up_char_buffer_string(char_buf, buffer2 , 30, 48);
+
+		if (stable == 1) {
+			alt_up_char_buffer_string(char_buf, "Stable", 40, 46);
+		} else {
+			alt_up_char_buffer_string(char_buf, "Unstable", 40, 46);
+		}
 		alt_up_pixel_buffer_dma_draw_box(pixel_buf, 101, 0, 639, 199, 0, 0);
 		alt_up_pixel_buffer_dma_draw_box(pixel_buf, 101, 201, 639, 299, 0, 0);
 
