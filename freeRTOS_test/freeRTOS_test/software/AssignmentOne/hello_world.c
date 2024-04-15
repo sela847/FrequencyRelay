@@ -2,6 +2,7 @@
 #include <system.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <math.h>
 #include "sys/alt_irq.h"
 #include "altera_avalon_pio_regs.h"
 #include "FreeRTOS/FreeRTOS.h"
@@ -42,10 +43,11 @@
 
 // Global Variables:
 int Current_Switch_State, Current_Freq, Freq_Val, Maintenance,
-		Current_Stable, Thresh_Val, Thresh_ROC, Prev_Stable, Ld_Manage_State, Init_Load, LoadTimeExp;
+		Current_Stable, Thresh_Val, Thresh_ROC, Prev_Stable, Ld_Manage_State, Init_Load, LoadTimeExp, readStart,recordTime;
 float Prev_Five_Freq[5], Current_ROC_Freq[5];
 uint8_t use_ROC_Thresh = 0; // 0 is using Thresh_Val, 1 is using ROC_Thresh
 
+int start, time_end;
 // Semaphores:
 SemaphoreHandle_t semaphore;
 SemaphoreHandle_t freqSemaphore;
@@ -61,6 +63,7 @@ static QueueHandle_t Q_freq_data;
 
 // Timers
 TimerHandle_t LoadTimer;
+
 
 typedef struct{
 	unsigned int x1;
@@ -118,9 +121,10 @@ void ps2_isr(void* ps2_device, alt_u32 id){
 }
 void loadTimerISR(TimerHandle_t xTimer) {
 	// Timer has expired, do smthn
-	printf("expired \n");
+	//printf("expired \n");
 	LoadTimeExp = 1;
 }
+
 void freq_relay_isr() {
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	Freq_Val= IORD(FREQUENCY_ANALYSER_BASE, 0); //it's in COUNT, not in HERTZ. to convert, do 16000/temp
@@ -158,7 +162,6 @@ int main(void) {
 
 	// Creating Timers
 	LoadTimer = xTimerCreate("LoadTimer",pdMS_TO_TICKS(500),pdTRUE,NULL,loadTimerISR);
-
 	// Creating Tasks used
 	xTaskCreate(Switch_Control_Task, 'Switch', configMINIMAL_STACK_SIZE, Switch_Control_Param, Switch_Task_Priority, switch_control_handle);
 	xTaskCreate(Load_LED_Ctrl_Task,'LEDs',configMINIMAL_STACK_SIZE,NULL,Load_LED_Ctrl_Task_Priority,NULL);
@@ -175,19 +178,28 @@ int main(void) {
 //=======================================END OF MAIN==================================================================//
 static void Switch_Control_Task(void *pvParams) {
 	while (1) {
-		printf("SwitchTask\n"); //Debug version
-		Current_Switch_State = IORD_ALTERA_AVALON_PIO_DATA(SLIDE_SWITCH_BASE);
+		//printf("SwitchTask\n"); //Debug version
+		if (Ld_Manage_State == 1) {
+			Current_Switch_State &= IORD_ALTERA_AVALON_PIO_DATA(SLIDE_SWITCH_BASE);
+		} else {
+			Current_Switch_State = IORD_ALTERA_AVALON_PIO_DATA(SLIDE_SWITCH_BASE);
+		}
 		vTaskDelay(pdMS_TO_TICKS(200));
 	}
 }
 static void Load_LED_Ctrl_Task(void *pvParams) {
 	unsigned int *LdQ;
 	while (1) {
-		printf("LED Control Task \n");
 		xQueueReceive(LoadControlQ,&LdQ,portMAX_DELAY);
+		if (recordTime == 1) {
+			recordTime = 0;
+			time_end = xTaskGetTickCount();
+			printf("Time taken to shed: %d \n",(int) (time_end-start));
+			printf("Start: %d, end: %d\n",start,time_end);
+		}
 		IOWR_ALTERA_AVALON_PIO_DATA(RED_LEDS_BASE, Current_Switch_State);
 		IOWR_ALTERA_AVALON_PIO_DATA(GREEN_LEDS_BASE,LdQ);
-		vTaskDelay(pdMS_TO_TICKS(200));
+		vTaskDelay(pdMS_TO_TICKS(50));
 	}
 }
 static void Load_Management_Task(void *pvParams) {
@@ -202,7 +214,7 @@ static void Load_Management_Task(void *pvParams) {
 			// Labeling as now in load managing state
 				Ld_Manage_State = 1;
 
-				Init_Load = Current_Switch_State;
+				Init_Load = 1;
 				Prev_Stable = Current_Switch_State;
 				xTimerStart(LoadTimer,0);
 			}
@@ -219,11 +231,12 @@ static void Load_Management_Task(void *pvParams) {
 						int pos = 4;
 						int mask = 1;
 						int val;
-						printf("Prev_Stable: %d\n",Prev_Stable);
+						//printf("Prev_Stable: %d\n",Prev_Stable);
+						//printf("Current state: %d\n",Current_Switch_State);
 						while (found == 0 && pos>=0) {
 							mask = 1<<pos;
 							val = Prev_Stable & mask;
-							if (!val && (Init_Load & (1U << pos))) {
+							if (!val && (Current_Switch_State & (1U << pos))) {
 								found =1;
 								printf("Position:%d \n",pos);
 								printf("Init: %d\n",Init_Load);
@@ -242,9 +255,12 @@ static void Load_Management_Task(void *pvParams) {
 						xTimerStart(LoadTimer,0);
 					}
 					Prev_Stable |= (1U << 5);
-					if (Prev_Stable == (Init_Load | 1<<5)) {
+					if (Prev_Stable == (Current_Switch_State | 1<<5)) {
 						// No longer needs to be in load manage state
 						Ld_Manage_State = 0;
+						printf("Stable Now\n");
+						readStart = 1;
+						xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 					}
 
 				} else {
@@ -255,8 +271,11 @@ static void Load_Management_Task(void *pvParams) {
 					if ((Prev_Stable >> 5) == 1) { // If it was stable prior we reset the timer
 						xTimerReset(LoadTimer,0);
 
-					} else if ((LoadTimeExp == 1) || ((Prev_Stable & 0b011111) == Init_Load) ) {
-
+					} else if ((LoadTimeExp == 1) || ((Init_Load == 1))) {
+						if (Init_Load == 1) {
+							recordTime = 1;
+						}
+						Init_Load = 0;
 						LoadTimeExp = 0;
 						int iso = Prev_Stable & -Prev_Stable;
 						while (iso > 1) {
@@ -271,27 +290,37 @@ static void Load_Management_Task(void *pvParams) {
 							LoadQ = Prev_Stable;
 							LoadQ &= 0b011111;
 							printf("LOAD: %d\n",LoadQ);
+
 							xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 
 						}
 						Prev_Stable = (Prev_Stable & ~(1 << 5)) | (0<< 5);
+
 						xTimerStart(LoadTimer,0);
+						start = xTaskGetTickCount();
 					}
 
 				}
+			} else {
+				LoadQ = Current_Switch_State;
+				xQueueSend(LoadControlQ,(void *)&LoadQ,0);
+				Ld_Manage_State = 0;
+				readStart = 1;
 
 			}
 		} else {
 			LoadQ = Current_Switch_State;
 			xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 			Ld_Manage_State = 0;
+			readStart = 1;
 		}
-		vTaskDelay(200);
+		vTaskDelay(50);
 
 	}
 }
 static void Stability_Monitor_Task(void *paParams) {
 	unsigned int stableQ;
+	readStart = 1;
 	while (1) {
 		float temp_five[5];
 		if (xSemaphoreTake(freqSemaphore, portMAX_DELAY) == pdTRUE) {
@@ -310,12 +339,20 @@ static void Stability_Monitor_Task(void *paParams) {
 			float change_freq = Prev_Five_Freq[0] - Prev_Five_Freq[1];
 			//printf("change freq %f\n", change_freq);
 			Current_ROC_Freq[0] = (double)(change_freq * 16000)/ (double)Freq_Val;
-			//printf("Rate of change is %f hz/s \n", Current_ROC_Freq);
+			//printf("Rate of change is %f hz/s \n", Current_ROC_Freq[0]);
 
-			if ((Prev_Five_Freq[0] < Thresh_Val) || (abs(Current_ROC_Freq)>Thresh_ROC)) {
+			if ((Prev_Five_Freq[0] < Thresh_Val) || (fabs(Current_ROC_Freq[0])>Thresh_ROC)) {
 				//printf("-----UNSTABLE----- \n");
 				//printf("Current Freq:%f, Thresh: %d, Current ROC: %f, Thresh: %d \n",Prev_Five_Freq[0],Thresh_Val,Current_ROC_Freq,Thresh_ROC);
 				Current_Stable = 0;  //Unstable
+
+				// Start timer to see how long it took to shed
+				if (readStart == 1 && Maintenance == 1) {
+					start = xTaskGetTickCount();
+					readStart = 0;
+				}
+
+
 				stableQ = Current_Stable;
 				xQueueSend(StabilityQ, (void *)&stableQ,0);
 			} else {
@@ -421,21 +458,21 @@ void VGA_Task(void *pvParameters ){
 	Line line_freq, line_roc;
 	char buffer1[50];
 	char buffer2[50];
-	unsigned int *stable;
+	//unsigned int *stable;
 	while(1){
 
 		//receive frequency data from queue
-		printf("VGA\n");
+		//printf("VGA\n");
 		//clear old graph to draw new graph
-		xQueueReceive(StabilityQ,&stable,portMAX_DELAY);
+		//xQueueReceive(StabilityQ,&stable,portMAX_DELAY);
 
-		sprintf(buffer1, "%d", Thresh_Val);
-		sprintf(buffer2, "%d", Thresh_ROC);
+		sprintf(buffer1, "%d ", Thresh_Val);
+		sprintf(buffer2, "%d ", Thresh_ROC);
 		alt_up_char_buffer_string(char_buf, buffer1 , 30, 45);
 		alt_up_char_buffer_string(char_buf, buffer2 , 30, 48);
 
-		if (stable == 1) {
-			alt_up_char_buffer_string(char_buf, "Stable", 40, 46);
+		if (Current_Stable == 1) {
+			alt_up_char_buffer_string(char_buf, "Stable  ", 40, 46);
 		} else {
 			alt_up_char_buffer_string(char_buf, "Unstable", 40, 46);
 		}
@@ -471,6 +508,3 @@ void VGA_Task(void *pvParameters ){
 
 	}
 }
-
-
-
