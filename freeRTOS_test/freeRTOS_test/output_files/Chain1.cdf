@@ -4,7 +4,7 @@ JedecChain;
 	DefaultMfr(6E);
 
 	P ActionCode(Cfg)
-		Device PartName(EP4CE115F29) Path("H:/Downloads/FrequencyRelay/freeRTOS_test/freeRTOS_test/") File("freq_relay_controller.sof") MfrSpec(OpMask(1));
+		Device PartName(EP4CE115F29) Path("H:/Documents/FrequencyRelay/freeRTOS_test/freeRTOS_test/") File("freq_relay_controller.sof") MfrSpec(OpMask(1));
 
 ChainEnd;
 

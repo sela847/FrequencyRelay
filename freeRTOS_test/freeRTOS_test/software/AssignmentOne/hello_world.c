@@ -2,6 +2,7 @@
 #include <system.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <math.h>
 #include "sys/alt_irq.h"
 #include "altera_avalon_pio_regs.h"
@@ -48,6 +49,7 @@ float Prev_Five_Freq[5], Current_ROC_Freq[5];
 uint8_t use_ROC_Thresh = 0; // 0 is using Thresh_Val, 1 is using ROC_Thresh
 
 int start, time_end;
+unsigned int start_time[5];
 // Semaphores:
 SemaphoreHandle_t semaphore;
 SemaphoreHandle_t freqSemaphore;
@@ -59,7 +61,7 @@ TaskHandle_t PRVGADraw;
 // Queues
 QueueHandle_t StabilityQ;
 QueueHandle_t LoadControlQ;
-static QueueHandle_t Q_freq_data;
+QueueHandle_t TimeQ;
 
 // Timers
 TimerHandle_t LoadTimer;
@@ -128,8 +130,6 @@ void loadTimerISR(TimerHandle_t xTimer) {
 void freq_relay_isr() {
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	Freq_Val= IORD(FREQUENCY_ANALYSER_BASE, 0); //it's in COUNT, not in HERTZ. to convert, do 16000/temp
-	//double temp = 16000.0/Freq_Val;
-	//xQueueSendToBackFromISR(Q_freq_data, &temp, pdFALSE);
 	xSemaphoreGiveFromISR(freqSemaphore, &xHigherPriorityTaskWoken);
 }
 
@@ -137,7 +137,7 @@ void freq_relay_isr() {
 int main(void) {
 	StabilityQ = xQueueCreate( STBL_QUEUE_SIZE, sizeof( void* ) );
 	LoadControlQ = xQueueCreate(STBL_QUEUE_SIZE, sizeof(void*));
-	//Q_freq_data = xQueueCreate(5, sizeof(double) );
+	TimeQ = xQueueCreate(5, sizeof(unsigned int));
 	alt_up_ps2_dev * ps2_device = alt_up_ps2_open_dev(PS2_NAME);
 
 	IOWR_ALTERA_AVALON_PIO_EDGE_CAP(PUSH_BUTTON_BASE, 0x7); // Clearing edge capture register for ISR
@@ -176,6 +176,7 @@ int main(void) {
 }
 
 //=======================================END OF MAIN==================================================================//
+
 static void Switch_Control_Task(void *pvParams) {
 	while (1) {
 		//printf("SwitchTask\n"); //Debug version
@@ -184,31 +185,43 @@ static void Switch_Control_Task(void *pvParams) {
 		} else {
 			Current_Switch_State = IORD_ALTERA_AVALON_PIO_DATA(SLIDE_SWITCH_BASE);
 		}
-		vTaskDelay(pdMS_TO_TICKS(200));
+		vTaskDelay(pdMS_TO_TICKS(100));
 	}
 }
+
 static void Load_LED_Ctrl_Task(void *pvParams) {
 	unsigned int *LdQ;
+	unsigned int calc_time;
+	unsigned int temp_start[5];
 	while (1) {
+		//xQueueReceive(Time_Start_ValQ, &time_start, portMAX_DELAY);
 		xQueueReceive(LoadControlQ,&LdQ,portMAX_DELAY);
+		//printf("LdQ: %u\n", LdQ);
 		if (recordTime == 1) {
 			recordTime = 0;
 			time_end = xTaskGetTickCount();
-			printf("Time taken to shed: %d \n",(int) (time_end-start));
+			calc_time = time_end - start_time[0];
+			printf("Time taken to shed: %d \n",(int) (time_end-start_time[0]));
 			printf("Start: %d, end: %d\n",start,time_end);
+			memcpy(temp_start,start_time, 5*sizeof(unsigned int));
+			for (uint8_t i=0;i<4;i++) {
+				start_time[i+1] = temp_start[i];
+			}
+			xQueueSend(TimeQ,&calc_time,0);
 		}
 		IOWR_ALTERA_AVALON_PIO_DATA(RED_LEDS_BASE, Current_Switch_State);
-		IOWR_ALTERA_AVALON_PIO_DATA(GREEN_LEDS_BASE,LdQ);
-		vTaskDelay(pdMS_TO_TICKS(50));
+		IOWR_ALTERA_AVALON_PIO_DATA(GREEN_LEDS_BASE, LdQ);
+		vTaskDelay(pdMS_TO_TICKS(5)); //Original 50
 	}
 }
+
 static void Load_Management_Task(void *pvParams) {
 	unsigned int *stable;
 	unsigned int LoadQ;
 	while(1) {
 
 		xQueueReceive(StabilityQ,&stable,portMAX_DELAY);
-
+		//printf("Maintenance: %d\n", Maintenance);
 		if (Maintenance != 0) {
 			if (stable == 0 && Ld_Manage_State == 0) { // Found to be unstable
 			// Labeling as now in load managing state
@@ -248,7 +261,7 @@ static void Load_Management_Task(void *pvParams) {
 							Prev_Stable |= (1U << pos); // putting 1 into the position found
 							LoadQ = Prev_Stable;
 							LoadQ &= 0b011111;
-							printf("LOAD: %d\n",LoadQ);
+							//printf("LOAD: %d\n",LoadQ);
 							xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 
 						}
@@ -264,7 +277,7 @@ static void Load_Management_Task(void *pvParams) {
 					}
 
 				} else {
-					printf("UNSTABLE \n");
+					//printf("UNSTABLE \n");
 					// Finding the lowest bit (lowest priority that is on)
 					int pos = 0;
 					unsigned int mask = 1;
@@ -289,7 +302,7 @@ static void Load_Management_Task(void *pvParams) {
 							Prev_Stable &= ~mask;
 							LoadQ = Prev_Stable;
 							LoadQ &= 0b011111;
-							printf("LOAD: %d\n",LoadQ);
+							//printf("LOAD: %d\n",LoadQ);
 
 							xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 
@@ -298,6 +311,9 @@ static void Load_Management_Task(void *pvParams) {
 
 						xTimerStart(LoadTimer,0);
 						start = xTaskGetTickCount();
+						start_time[0] = start;
+						//xQueueSend(Time_val, &start ,0);
+
 					}
 
 				}
@@ -348,7 +364,9 @@ static void Stability_Monitor_Task(void *paParams) {
 
 				// Start timer to see how long it took to shed
 				if (readStart == 1 && Maintenance == 1) {
-					start = xTaskGetTickCount();
+					start = xTaskGetTickCount(); //TickType_t's bits are set in FreeRTOSConfig.h by configUSE_16_BIT_TICKS where 0 is 32bits while 1 is 16 bits
+					start_time[0] = start;
+					//xQueueSend(Time_Start_ValQ, &start ,0); //=================Sending time value into Queue===================================================
 					readStart = 0;
 				}
 
@@ -451,50 +469,73 @@ void VGA_Task(void *pvParameters ){
 	alt_up_char_buffer_string(char_buf, "Lower Threshold", 10, 45);
 	alt_up_char_buffer_string(char_buf, "RoC Threshold", 10, 48);
 	alt_up_char_buffer_string(char_buf, "Status", 40, 43);
-
-
+	alt_up_char_buffer_string(char_buf, "Min Time", 40, 51);
+	alt_up_char_buffer_string(char_buf, "Max time", 50, 51);
+	alt_up_char_buffer_string(char_buf, "Average time", 60, 51);
 
 	int i = 0, j = 0;
 	Line line_freq, line_roc;
-	char buffer1[50];
-	char buffer2[50];
-	//unsigned int *stable;
+	char buffer1[50], buffer2[50], buffer3[50], buffer4[50], buffer5[5];
+	unsigned int max = 0, min = 0, temp = 0; //Temp is for first storing the total, then stores the calculated average
+	unsigned int Time[] = {0,0,0,0,0};
 	while(1){
 
 		//receive frequency data from queue
 		//printf("VGA\n");
 		//clear old graph to draw new graph
-		//xQueueReceive(StabilityQ,&stable,portMAX_DELAY);
+		while (uxQueueMessagesWaiting(TimeQ) != 0) {
+			xQueueReceive(TimeQ, &Time+i, portMAX_DELAY);
+			i=i++%5;
+		}
 
+		for (uint8_t k = 0; k < 5; k++) {
+			printf("Time %u\n", Time[i]);
+			if (Time[i] > max) {
+				max = Time[i];
+			} else {
+				min = Time[i];
+			}
+			temp = temp + Time[i];
+		}
+
+		temp = temp/5;
 		sprintf(buffer1, "%d ", Thresh_Val);
 		sprintf(buffer2, "%d ", Thresh_ROC);
+		sprintf(buffer3, "%u ", max);
+		sprintf(buffer4, "%u ", min);
+		sprintf(buffer5, "%u ", temp);
+
 		alt_up_char_buffer_string(char_buf, buffer1 , 30, 45);
 		alt_up_char_buffer_string(char_buf, buffer2 , 30, 48);
+		alt_up_char_buffer_string(char_buf, buffer3 , 40, 54);
+		alt_up_char_buffer_string(char_buf, buffer4 , 50, 54);
+		alt_up_char_buffer_string(char_buf, buffer5 , 60, 54);
 
 		if (Current_Stable == 1) {
 			alt_up_char_buffer_string(char_buf, "Stable  ", 40, 46);
 		} else {
 			alt_up_char_buffer_string(char_buf, "Unstable", 40, 46);
 		}
+
 		alt_up_pixel_buffer_dma_draw_box(pixel_buf, 101, 0, 639, 199, 0, 0);
 		alt_up_pixel_buffer_dma_draw_box(pixel_buf, 101, 201, 639, 299, 0, 0);
 
 		for(j=0;j<5;++j){ //i here points to the oldest data, j loops through all the data to be drawn on VGA
-			if (((int)(Prev_Five_Freq[(i+j)%5]) > MIN_FREQ) && ((int)(Prev_Five_Freq[(i+j+1)%5]) > MIN_FREQ)){
+			if (((int)(Prev_Five_Freq[(j)%5]) > MIN_FREQ) && ((int)(Prev_Five_Freq[(j+1)%5]) > MIN_FREQ)){
 				//Calculate coordinates of the two data points to draw a line in between
 				//Frequency plot
 				line_freq.x1 = FREQPLT_ORI_X + FREQPLT_GRID_SIZE_X * j;
-				line_freq.y1 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (Prev_Five_Freq[(i+j)%5] - MIN_FREQ));
+				line_freq.y1 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (Prev_Five_Freq[(j)%5] - MIN_FREQ));
 
 				line_freq.x2 = FREQPLT_ORI_X + FREQPLT_GRID_SIZE_X * (j + 1);
-				line_freq.y2 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (Prev_Five_Freq[(i+j+1)%5] - MIN_FREQ));
+				line_freq.y2 = (int)(FREQPLT_ORI_Y - FREQPLT_FREQ_RES * (Prev_Five_Freq[(j+1)%5] - MIN_FREQ));
 
 				//Frequency RoC plot
 				line_roc.x1 = ROCPLT_ORI_X + ROCPLT_GRID_SIZE_X * j;
-				line_roc.y1 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * Current_ROC_Freq[(i+j)%5]);
+				line_roc.y1 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * Current_ROC_Freq[(j)%5]);
 
 				line_roc.x2 = ROCPLT_ORI_X + ROCPLT_GRID_SIZE_X * (j + 1);
-				line_roc.y2 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * Current_ROC_Freq[(i+j+1)%5]);
+				line_roc.y2 = (int)(ROCPLT_ORI_Y - ROCPLT_ROC_RES * Current_ROC_Freq[(j+1)%5]);
 
 				//printf("first: %f\n", Prev_Five_Freq[0]);
 				//printf("last value: %f\n", Prev_Five_Freq[4]);
