@@ -273,7 +273,6 @@ static void Load_Management_Task(void *pvParams) {
 						Ld_Manage_State = 0;
 						printf("Stable Now\n");
 						readStart = 1;
-						Init_Load = 1;
 						xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 					}
 

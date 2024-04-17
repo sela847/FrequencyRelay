@@ -273,7 +273,6 @@ static void Load_Management_Task(void *pvParams) {
 						Ld_Manage_State = 0;
 						printf("Stable Now\n");
 						readStart = 1;
-						Init_Load = 1;
 						xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 					}
 
@@ -500,8 +499,7 @@ void VGA_Task(void *pvParameters ){
 			Time[0] = temp;
 			if (temp > max) {
 				max = temp;
-			}
-			if (temp < min){
+			} else if (temp < min){
 				min = temp;
 			}
 			for (uint8_t k = 0; k < 5; k++){
@@ -564,7 +562,7 @@ void VGA_Task(void *pvParameters ){
 			}
 		}
 
-		vTaskDelay(pdMS_TO_TICKS(125));
+		vTaskDelay(pdMS_TO_TICKS(500));
 
 	}
 }
