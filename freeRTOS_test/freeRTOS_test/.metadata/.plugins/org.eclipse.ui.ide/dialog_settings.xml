@@ -5,6 +5,8 @@
 		<item value="false" key="WizardProjectsImportPage.STORE_COPY_PROJECT_ID"/>
 		<item value="false" key="WizardProjectsImportPage.STORE_ARCHIVE_SELECTED"/>
 		<list key="WizardProjectsImportPage.STORE_DIRECTORIES">
+			<item value="H:\Downloads\FrequencyRelay\freeRTOS_test\freeRTOS_test\software\AssignmentOne_bsp"/>
+			<item value="H:\Downloads\FrequencyRelay\freeRTOS_test\freeRTOS_test\software\AssignmentOne"/>
 			<item value="H:\Documents\FrequencyRelay\freeRTOS_test\freeRTOS_test\software\AssignmentOne_bsp"/>
 			<item value="H:\Documents\FrequencyRelay\freeRTOS_test\freeRTOS_test\software\AssignmentOne"/>
 		</list>

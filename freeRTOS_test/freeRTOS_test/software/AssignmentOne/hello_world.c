@@ -22,9 +22,9 @@
 //#define mainTask_PRIORITY (tskIDLE_PRIORITY + 1)
 
 #define Switch_Task_Priority 4
-#define Stable_Mon_Tsk_Priority 1
+#define Stable_Mon_Tsk_Priority 2
 #define Keyboard_Task_Priority 5
-#define Load_Management_Task_Priority 2
+#define Load_Management_Task_Priority 1
 #define Load_LED_Ctrl_Task_Priority 3
 #define VGA_Task_Priority 6
 #define   STBL_QUEUE_SIZE  50
@@ -38,7 +38,7 @@
 #define ROCPLT_ORI_X 101
 #define ROCPLT_GRID_SIZE_X 50
 #define ROCPLT_ORI_Y 259.0
-#define ROCPLT_ROC_RES 0.5		//number of pixels per Hz/s (y axis scale)
+#define ROCPLT_ROC_RES 1		//number of pixels per Hz/s (y axis scale)
 
 #define MIN_FREQ 45.0 //minimum frequency to draw
 
@@ -190,9 +190,8 @@ static void Switch_Control_Task(void *pvParams) {
 }
 
 static void Load_LED_Ctrl_Task(void *pvParams) {
-	unsigned int *LdQ;
+	unsigned int LdQ;
 	unsigned int calc_time;
-	unsigned int temp_start[5];
 	while (1) {
 		//xQueueReceive(Time_Start_ValQ, &time_start, portMAX_DELAY);
 		xQueueReceive(LoadControlQ,&LdQ,portMAX_DELAY);
@@ -200,17 +199,19 @@ static void Load_LED_Ctrl_Task(void *pvParams) {
 		if (recordTime == 1) {
 			recordTime = 0;
 			time_end = xTaskGetTickCount();
-			calc_time = time_end - start_time[0];
-			printf("Time taken to shed: %d \n",(int) (time_end-start_time[0]));
+			calc_time = time_end - start;
+			printf("Time taken to shed: %d \n",(int) (calc_time));
 			printf("Start: %d, end: %d\n",start,time_end);
-			memcpy(temp_start,start_time, 5*sizeof(unsigned int));
-			for (uint8_t i=0;i<4;i++) {
-				start_time[i+1] = temp_start[i];
-			}
 			xQueueSend(TimeQ,&calc_time,0);
 		}
-		IOWR_ALTERA_AVALON_PIO_DATA(RED_LEDS_BASE, Current_Switch_State);
-		IOWR_ALTERA_AVALON_PIO_DATA(GREEN_LEDS_BASE, LdQ);
+		if ((Maintenance == 0) || (Ld_Manage_State == 0)) {
+			IOWR_ALTERA_AVALON_PIO_DATA(GREEN_LEDS_BASE, 0);
+			IOWR_ALTERA_AVALON_PIO_DATA(RED_LEDS_BASE, Current_Switch_State);
+		} else if (Ld_Manage_State == 1) {
+			IOWR_ALTERA_AVALON_PIO_DATA(RED_LEDS_BASE, LdQ);
+			IOWR_ALTERA_AVALON_PIO_DATA(GREEN_LEDS_BASE, (LdQ ^ Current_Switch_State));
+		}
+
 		vTaskDelay(pdMS_TO_TICKS(5)); //Original 50
 	}
 }
@@ -226,7 +227,6 @@ static void Load_Management_Task(void *pvParams) {
 			if (stable == 0 && Ld_Manage_State == 0) { // Found to be unstable
 			// Labeling as now in load managing state
 				Ld_Manage_State = 1;
-
 				Init_Load = 1;
 				Prev_Stable = Current_Switch_State;
 				xTimerStart(LoadTimer,0);
@@ -309,9 +309,9 @@ static void Load_Management_Task(void *pvParams) {
 						}
 						Prev_Stable = (Prev_Stable & ~(1 << 5)) | (0<< 5);
 
-						xTimerStart(LoadTimer,0);
-						start = xTaskGetTickCount();
-						start_time[0] = start;
+//						xTimerStart(LoadTimer,0);
+//						start = xTaskGetTickCount();
+//						start_time[0] = start;
 						//xQueueSend(Time_val, &start ,0);
 
 					}
@@ -322,7 +322,6 @@ static void Load_Management_Task(void *pvParams) {
 				xQueueSend(LoadControlQ,(void *)&LoadQ,0);
 				Ld_Manage_State = 0;
 				readStart = 1;
-
 			}
 		} else {
 			LoadQ = Current_Switch_State;
@@ -363,9 +362,9 @@ static void Stability_Monitor_Task(void *paParams) {
 				Current_Stable = 0;  //Unstable
 
 				// Start timer to see how long it took to shed
-				if (readStart == 1 && Maintenance == 1) {
+				if (readStart == 1 ){//&& Maintenance == 1) {
 					start = xTaskGetTickCount(); //TickType_t's bits are set in FreeRTOSConfig.h by configUSE_16_BIT_TICKS where 0 is 32bits while 1 is 16 bits
-					start_time[0] = start;
+					//start_time[0] = start;
 					//xQueueSend(Time_Start_ValQ, &start ,0); //=================Sending time value into Queue===================================================
 					readStart = 0;
 				}
@@ -461,55 +460,73 @@ void VGA_Task(void *pvParameters ){
 	alt_up_char_buffer_string(char_buf, "46", 10, 22);
 
 	alt_up_char_buffer_string(char_buf, "df/dt(Hz/s)", 4, 26);
-	alt_up_char_buffer_string(char_buf, "60", 10, 28);
-	alt_up_char_buffer_string(char_buf, "30", 10, 30);
+	alt_up_char_buffer_string(char_buf, "30", 10, 28);
+	alt_up_char_buffer_string(char_buf, "15", 10, 30);
 	alt_up_char_buffer_string(char_buf, "0", 10, 32);
-	alt_up_char_buffer_string(char_buf, "-30", 9, 34);
-	alt_up_char_buffer_string(char_buf, "-60", 9, 36);
+	alt_up_char_buffer_string(char_buf, "-15", 9, 34);
+	alt_up_char_buffer_string(char_buf, "-30", 9, 36);
+
 	alt_up_char_buffer_string(char_buf, "Lower Threshold", 10, 45);
 	alt_up_char_buffer_string(char_buf, "RoC Threshold", 10, 48);
+	alt_up_char_buffer_string(char_buf, "Maintenance", 10, 51);
 	alt_up_char_buffer_string(char_buf, "Status", 40, 43);
 	alt_up_char_buffer_string(char_buf, "Min Time", 40, 51);
 	alt_up_char_buffer_string(char_buf, "Max time", 50, 51);
 	alt_up_char_buffer_string(char_buf, "Average time", 60, 51);
+	alt_up_char_buffer_string(char_buf, "Total time", 50, 43);
+	alt_up_char_buffer_string(char_buf, "Frequency", 50, 10);
+	alt_up_char_buffer_string(char_buf, "ROC", 50, 20);
 
-	int i = 0, j = 0;
+	int j = 0;
 	Line line_freq, line_roc;
-	char buffer1[50], buffer2[50], buffer3[50], buffer4[50], buffer5[5];
-	unsigned int max = 0, min = 0, temp = 0; //Temp is for first storing the total, then stores the calculated average
+	char buffer1[50], buffer2[50], buffer3[50], buffer4[50], buffer5[50],
+			buffer6[50], buffer7[50], buffer8[75], buffer9[75];
+	unsigned int max = 0, min = 100, total = 0, temp = 0; //Temp is for first storing the total, then stores the calculated average
+	unsigned int temp1[] = {0,0,0,0,0};
 	unsigned int Time[] = {0,0,0,0,0};
-	while(1){
 
+	while(1){
 		//receive frequency data from queue
 		//printf("VGA\n");
 		//clear old graph to draw new graph
 		while (uxQueueMessagesWaiting(TimeQ) != 0) {
-			xQueueReceive(TimeQ, &Time+i, portMAX_DELAY);
-			i=i++%5;
-		}
-
-		for (uint8_t k = 0; k < 5; k++) {
-			printf("Time %u\n", Time[i]);
-			if (Time[i] > max) {
-				max = Time[i];
-			} else {
-				min = Time[i];
+			xQueueReceive(TimeQ, &temp, portMAX_DELAY);
+			total = 0;
+			memcpy(temp1,Time, 5*sizeof(unsigned int));
+			for (uint8_t i=0;i<4;i++) {
+				Time[i+1] = temp1[i];
 			}
-			temp = temp + Time[i];
+			Time[0] = temp;
+			if (temp > max) {
+				max = temp;
+			} else if (temp < min){
+				min = temp;
+			}
+			for (uint8_t k = 0; k < 5; k++){
+				total = total + Time[k];
+			}
 		}
 
-		temp = temp/5;
+		//total = total/5;
 		sprintf(buffer1, "%d ", Thresh_Val);
 		sprintf(buffer2, "%d ", Thresh_ROC);
-		sprintf(buffer3, "%u ", max);
-		sprintf(buffer4, "%u ", min);
-		sprintf(buffer5, "%u ", temp);
+		sprintf(buffer3, "%u ",	min);
+		sprintf(buffer4, "%u ", max);
+		sprintf(buffer5, "%u ", total/5);
+		sprintf(buffer6, "%u ", xTaskGetTickCount());
+		sprintf(buffer7, "%u ", Maintenance);
+		sprintf(buffer8, "%.1f, %.1f, %.1f, %.1f, %.1f ", Prev_Five_Freq[0], Prev_Five_Freq[1], Prev_Five_Freq[2], Prev_Five_Freq[3], Prev_Five_Freq[4]);
+		sprintf(buffer9, "%.1f, %.1f, %.1f, %.1f, %.1f             ", Current_ROC_Freq[0], Current_ROC_Freq[1], Current_ROC_Freq[2], Current_ROC_Freq[3], Current_ROC_Freq[4]);
 
 		alt_up_char_buffer_string(char_buf, buffer1 , 30, 45);
 		alt_up_char_buffer_string(char_buf, buffer2 , 30, 48);
 		alt_up_char_buffer_string(char_buf, buffer3 , 40, 54);
 		alt_up_char_buffer_string(char_buf, buffer4 , 50, 54);
 		alt_up_char_buffer_string(char_buf, buffer5 , 60, 54);
+		alt_up_char_buffer_string(char_buf, buffer6 , 50, 46);
+		alt_up_char_buffer_string(char_buf, buffer7 , 30, 51);
+		alt_up_char_buffer_string(char_buf, buffer8 , 46, 15);
+		alt_up_char_buffer_string(char_buf, buffer9 , 46, 25);
 
 		if (Current_Stable == 1) {
 			alt_up_char_buffer_string(char_buf, "Stable  ", 40, 46);
