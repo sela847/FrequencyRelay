@@ -53,7 +53,6 @@ unsigned int start_time[5];
 // Semaphores:
 SemaphoreHandle_t semaphore;
 SemaphoreHandle_t freqSemaphore;
-SemaphoreHandle_t threshold_mutex;
 
 TaskHandle_t switch_control_handle;
 TaskHandle_t PRVGADraw;
@@ -157,7 +156,6 @@ int main(void) {
 	//Create binary Semaphore
 	semaphore = xSemaphoreCreateBinary();
 	freqSemaphore = xSemaphoreCreateBinary();
-	threshold_mutex = xSemaphoreCreateMutex(); //has a priority inheritance mechanism unlike binary semaphores.
 
 
 	// Creating Timers
